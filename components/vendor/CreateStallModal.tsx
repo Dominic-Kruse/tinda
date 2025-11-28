@@ -1,0 +1,332 @@
+"use client"
+
+import { useState, useEffect } from "react"
+import axios from "axios"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog"
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
+import { CurrentUser } from "@/lib/utils"
+
+interface CreateStallModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+// Define the market options - these will populate stall_address directly
+const ILOILO_MARKETS = [
+  "Iloilo Central Market, J.M. Basa St, Iloilo City Proper",
+  "Jaro Plaza Market, Jaro, Iloilo City", 
+  "La Paz Public Market, Rizal St, La Paz, Iloilo City",
+  "Mandurriao Public Market, Benigno Aquino Ave, Mandurriao",
+  "Arevalo Public Market, Arevalo, Iloilo City"
+];
+
+export function CreateStallModal({ isOpen, onClose }: CreateStallModalProps) {
+  const [stallData, setStallData] = useState({
+    stall_name: "",
+    stall_description: "",
+    category: "",
+    stall_address: "", // This will store the selected market address
+    stall_city: "Iloilo City", // Auto-filled for all Iloilo markets
+    stall_state: "Iloilo", // Auto-filled
+    stall_zipcode: "5000", // Auto-filled
+    stall_country: "Philippines",
+  })
+  const [stallImages, setStallImages] = useState({
+    icon: null as File | null,
+    banner: null as File | null,
+  })
+  const [preview, setPreview] = useState({
+    icon: "",
+    banner: "",
+  })
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  // Clean up object URLs to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (preview.icon) URL.revokeObjectURL(preview.icon);
+      if (preview.banner) URL.revokeObjectURL(preview.banner);
+    };
+  }, [preview.icon, preview.banner]);
+
+  const handleChange = (field: string, value: string) => {
+    setStallData((prev) => ({ ...prev, [field]: value }))
+  }
+
+  // Handle market selection - sets stall_address and auto-fills other fields
+  const handleMarketChange = (marketAddress: string) => {
+    setStallData((prev) => ({
+      ...prev,
+      stall_address: marketAddress,
+      stall_city: "Iloilo City", // Auto-fill for consistency
+      stall_state: "Iloilo", // Auto-fill for consistency  
+      stall_zipcode: "5000" // Auto-fill for consistency
+    }));
+  }
+
+  const handleFileChange = (field: "icon" | "banner", file: File | null) => {
+    if (file) {
+      // Validate file type and size
+      if (!file.type.startsWith('image/')) {
+        alert("❌ Please upload only image files");
+        return;
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        alert("❌ Image size should be less than 5MB");
+        return;
+      }
+      
+      setStallImages((prev) => ({ ...prev, [field]: file }))
+      setPreview((prev) => ({ ...prev, [field]: URL.createObjectURL(file) }))
+    }
+  }
+
+  const handleSubmit = async () => {
+    const currentUser = CurrentUser();
+    console.log("Current user:", currentUser);
+    
+    const userId = currentUser?.id;
+    console.log("Current user ID:", userId);
+     
+    if (!userId) {
+      alert("Please login to create a stall");
+      return;
+    }
+
+    // Validate required fields - now using stall_address for market location
+    if (!stallData.stall_name || !stallData.category || 
+        !stallData.stall_description || !stallData.stall_address) {
+      alert("❌ Please fill in all required fields (Name, Category, Description, Market Location)");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const token = localStorage.getItem("token") || sessionStorage.getItem("token");
+      console.log("JWT Token:", token);
+
+      if (!token) {
+        alert("❌ Authentication token not found. Please log in again.");
+        return;
+      }
+
+      const formData = new FormData();
+      
+      // Append all stall data
+      Object.entries(stallData).forEach(([key, value]) => formData.append(key, value));
+      
+      // Append user_id
+      formData.append("user_id", userId.toString());
+
+      // Append images with correct field names
+      if (stallImages.icon) formData.append("icon_image", stallImages.icon);
+      if (stallImages.banner) formData.append("banner_image", stallImages.banner);
+
+      // Debug: log what's being sent
+      console.log("FormData contents:");
+      for (const pair of formData.entries()) {
+        console.log(pair[0], pair[1]);
+      }
+
+      const res = await axios.post("http://localhost:3001/api/stalls", formData, {
+        headers: { 
+          "Content-Type": "multipart/form-data",
+          "Authorization": `Bearer ${token}`
+        },
+      });
+
+      alert("✅ Stall created successfully!");
+      console.log(res.data);
+      if (res.data && res.data.stall_id) {
+        localStorage.setItem("selectedStallId", res.data.stall_id);
+      }
+      onClose();
+      window.location.href = "/vendor/dashboard";
+
+      // Reset form
+      setStallData({
+        stall_name: "",
+        stall_description: "",
+        category: "",
+        stall_address: "",
+        stall_city: "Iloilo City",
+        stall_state: "Iloilo",
+        stall_zipcode: "5000",
+        stall_country: "Philippines",
+      });
+      setStallImages({ icon: null, banner: null });
+      setPreview({ icon: "", banner: "" });
+    } catch (error: any) {
+      console.error("Error creating stall:", error);
+      
+      if (error.response?.status === 401) {
+        alert("❌ Authentication failed. Please log in again.");
+      } else if (error.response?.data?.error) {
+        alert(`❌ ${error.response.data.error}`);
+      } else {
+        alert("❌ Error creating stall. Please try again.");
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="max-w-2xl rounded-2xl p-6 shadow-xl">
+        <DialogHeader>
+          <DialogTitle className="text-xl font-semibold text-center">
+            🏪 Create Your Stall
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-5 mt-4">
+          {/* Image Uploads */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Icon Image</Label>
+              {preview.icon && (
+                <img
+                  src={preview.icon}
+                  alt="Icon Preview"
+                  className="rounded-lg w-full h-32 object-cover border"
+                />
+              )}
+              <Input
+                type="file"
+                accept="image/*"
+                onChange={(e) => handleFileChange("icon", e.target.files?.[0] ?? null)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Banner Image</Label>
+              {preview.banner && (
+                <img
+                  src={preview.banner}
+                  alt="Banner Preview"
+                  className="rounded-lg w-full h-32 object-cover border"
+                />
+              )}
+              <Input
+                type="file"
+                accept="image/*"
+                onChange={(e) => handleFileChange("banner", e.target.files?.[0] ?? null)}
+              />
+            </div>
+          </div>
+
+          {/* Stall Info */}
+          <div className="space-y-2">
+            <Label>Stall Name *</Label>
+            <Input
+              value={stallData.stall_name}
+              onChange={(e) => handleChange("stall_name", e.target.value)}
+              placeholder="e.g. Lola's BBQ & Grill"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Description *</Label>
+            <Textarea
+              value={stallData.stall_description}
+              onChange={(e) => handleChange("stall_description", e.target.value)}
+              placeholder="Describe your stall and what makes it special"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Category *</Label>
+            <Select onValueChange={(value) => handleChange("category", value)}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select category" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Food">Food</SelectItem>
+                <SelectItem value="Clothing">Clothing</SelectItem>
+                <SelectItem value="Electronics">Electronics</SelectItem>
+                <SelectItem value="Other">Other</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Market Location Dropdown - Uses stall_address directly */}
+          <div className="space-y-2">
+            <Label>Market Location *</Label>
+            <Select onValueChange={handleMarketChange} value={stallData.stall_address}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select a market in Iloilo" />
+              </SelectTrigger>
+              <SelectContent>
+                {ILOILO_MARKETS.map((market, index) => (
+                  <SelectItem key={index} value={market}>
+                    {market.split(",")[0]} {/* Show only market name in dropdown */}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {/* Display selected market address for confirmation */}
+            {stallData.stall_address && (
+              <div className="text-sm text-gray-600 mt-2 p-2 bg-gray-50 rounded">
+                <strong>Selected Location:</strong> {stallData.stall_address}
+              </div>
+            )}
+          </div>
+
+          {/* Display auto-filled location fields (read-only) */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>City</Label>
+              <Input
+                value={stallData.stall_city}
+                readOnly
+                className="bg-gray-50"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>State/Province</Label>
+              <Input
+                value={stallData.stall_state}
+                readOnly
+                className="bg-gray-50"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Zip Code</Label>
+            <Input
+              value={stallData.stall_zipcode}
+              readOnly
+              className="bg-gray-50"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Country</Label>
+            <Input value={stallData.stall_country} disabled />
+          </div>
+        </div>
+
+        <DialogFooter className="mt-6">
+          <Button
+            onClick={handleSubmit}
+            disabled={isSubmitting}
+            className="w-full rounded-lg font-semibold"
+          >
+            {isSubmitting ? "Creating..." : "Create Stall"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
